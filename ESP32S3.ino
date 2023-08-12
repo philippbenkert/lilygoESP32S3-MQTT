@@ -12,9 +12,8 @@
 WebServer server(80);
 int sensorPin = 10; // der Pin, an dem der Sensor angeschlossen ist
 
-void sendData();
 void callback(char* topic, byte* payload, unsigned int length);
-void reconnect();
+void sendData();
 
 // Kalman Filter variables
 double currentLatitude = 0.0;
@@ -92,7 +91,7 @@ void loop() {
     gps.encode(ss.read());
     if (gps.location.isUpdated()) {
       // Überprüfen Sie, ob das Fahrzeug geparkt ist
-      if (gps.speed.kmph() < 1.5) {
+      if (gps.speed.kmph() < 2.0) {
         if (!isParked) {
           // Wenn das Fahrzeug gerade parkiert hat, setzen Sie die Parkzeit und den Status
           lastSendTime = millis();
@@ -124,13 +123,12 @@ float current = voltage / SHUNT_RESISTOR; // Umrechnung in Ampere (mA)
 // Umrechnung des Stroms (mA) in Druck
 float pressure = MIN_PRESSURE + ((current - MIN_MA) / (MAX_MA - MIN_MA)) * (MAX_PRESSURE - MIN_PRESSURE);
 Serial.println(pressure);
-char pressureMsg[50];
-snprintf(pressureMsg, 50, "%f", pressure);
-client.publish("pressure", pressureMsg);
-  }
 
   // OTA update handling
   ArduinoOTA.handle();
+  }
+
+
 
   if (!client.connected()) {
     reconnect();
@@ -248,7 +246,7 @@ boolean reconnect() {
       }
 
       // For SSR
-      client.publish("/ssr", "hello world");
+      client.publish("/ssr", "off");
       client.subscribe("/ssr");
 
      
