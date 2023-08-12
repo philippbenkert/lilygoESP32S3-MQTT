@@ -14,6 +14,7 @@ int sensorPin = 10; // der Pin, an dem der Sensor angeschlossen ist
 
 void sendData();
 void callback(char* topic, byte* payload, unsigned int length);
+void reconnect();
 
 // Kalman Filter variables
 double currentLatitude = 0.0;
