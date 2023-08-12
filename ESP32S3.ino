@@ -20,6 +20,13 @@ double kalmanGain = 0.0;
 double previousLatitude = 0.0;
 double previousLongitude = 0.0;
 
+const float SHUNT_RESISTOR = 150.0; // in Ohm
+const float MIN_MA = 4.0;  // Minimum 4mA
+const float MAX_MA = 20.0; // Maximum 20mA
+const float MIN_PRESSURE = 0.0; // Minimum Druckwert (angepasst an Ihren Sensor)
+const float MAX_PRESSURE = 100.0; // Maximum Druckwert (angepasst an Ihren Sensor)
+
+
 // Outlier detection variables
 const double outlierThreshold = 10.0;  // Adjust the threshold as needed
 bool isOutlier = false;
@@ -105,13 +112,16 @@ void loop() {
         }
       }
     }
-    int sensorValue = analogRead(sensorPin);
-  float voltage = sensorValue * (3.3 / 4095.0); // Umrechnung in Volt
-  float current = voltage / 150.0; // Umrechnung in Ampere
-  float pressure = (current - 0.004) / 0.000016; // Umrechnung in kPa
-  Serial.println(pressure);
-  delay(1000);
-  }
+
+    
+  int sensorValue = analogRead(sensorPin);
+float voltage = sensorValue * (3.3 / 4095.0); // Umrechnung in Volt
+float current = voltage / SHUNT_RESISTOR; // Umrechnung in Ampere (mA)
+
+// Umrechnung des Stroms (mA) in Druck
+float pressure = MIN_PRESSURE + ((current - MIN_MA) / (MAX_MA - MIN_MA)) * (MAX_PRESSURE - MIN_PRESSURE);
+Serial.println(pressure);
+
 
   // OTA update handling
   ArduinoOTA.handle();
