@@ -12,6 +12,7 @@
 WebServer server(80);
 int sensorPin = 10; // der Pin, an dem der Sensor angeschlossen ist
 
+void callback(char* topic, byte* payload, unsigned int length);
 
 // Kalman Filter variables
 double currentLatitude = 0.0;
