@@ -136,7 +136,7 @@ client.publish("pressure", pressureMsg);
     reconnect();
   }
   client.loop();
-}
+}}
 
 void sendData() {
   // Apply Kalman Filter
