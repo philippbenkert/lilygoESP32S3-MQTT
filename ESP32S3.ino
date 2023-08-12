@@ -120,7 +120,11 @@ void loop() {
   // Umrechnung des Stroms (mA) in Druck
   float pressure = MIN_PRESSURE + ((current - MIN_MA) / (MAX_MA - MIN_MA)) * (MAX_PRESSURE - MIN_PRESSURE);
   Serial.println(pressure);
+  char pressureMsg[50];
+  snprintf(pressureMsg, 50, "%f", pressure);
+  client.publish("pressure", pressureMsg);
 
+  
   // OTA update handling
   ArduinoOTA.handle();
 
