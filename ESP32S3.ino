@@ -6,14 +6,14 @@
 #include <ESPmDNS.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
-#include <Update.h>
-#include <ESP32HTTPUpdateServer.h>
 #include <WebServer.h>
 WebServer server(80);
+
 int sensorPin = 10; // der Pin, an dem der Sensor angeschlossen ist
 
 void callback(char* topic, byte* payload, unsigned int length);
 void sendData();
+boolean reconnect();
 
 // Kalman Filter variables
 double currentLatitude = 0.0;
@@ -28,20 +28,19 @@ const float MAX_MA = 20.0; // Maximum 20mA
 const float MIN_PRESSURE = 0.0; // Minimum Druckwert (angepasst an Ihren Sensor)
 const float MAX_PRESSURE = 100.0; // Maximum Druckwert (angepasst an Ihren Sensor)
 
-
 // Outlier detection variables
 const double outlierThreshold = 10.0;  // Adjust the threshold as needed
 bool isOutlier = false;
 
 // Replace with your network credentials
-const char* ssid = "Wolf Verschwindibus";
-const char* password = "Philipp22121982";
+const char* ssid = "YOUR_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
 
 unsigned long lastSendTime = 0;
 bool isParked = false;
 
 // Replace with your MQTT Broker address
-const char* mqtt_server = "192.168.0.1";
+const char* mqtt_server = "YOUR_MQTT_SERVER_ADDRESS";
 
 // Shift register pins
 const int SER_Pin = 7;    //pin 14 on the 75HC595
@@ -58,7 +57,6 @@ const int ssrPin = 12;
 SoftwareSerial ss(11, 13);  // RX, TX
 
 TinyGPSPlus gps;
-ESP32HTTPUpdateServer httpUpdater;
 
 // Create a ShiftRegister object
 ShiftRegister74HC595<numOfShiftRegisters> sr(SER_Pin, RCLK_Pin, SRCLK_Pin);
@@ -72,14 +70,13 @@ void setup() {
   Serial.begin(115200);
   ss.begin(9600);
   setup_wifi();
-  client.setServer(mqtt_server, 1024);  // MQTT default port is 1883
+  client.setServer(mqtt_server, 1883);  // MQTT default port is 1883
   client.setCallback(callback);
 
   pinMode(ssrPin, OUTPUT);
 
   // OTA setup
   MDNS.begin("esp32");  //http://esp32.local
-  httpUpdater.setup(&server);
   server.begin();
 
   MDNS.addService("http", "tcp", 80);
@@ -114,21 +111,18 @@ void loop() {
         }
       }
     }
+  }
 
-    
   int sensorValue = analogRead(sensorPin);
-float voltage = sensorValue * (3.3 / 4095.0); // Umrechnung in Volt
-float current = voltage / SHUNT_RESISTOR; // Umrechnung in Ampere (mA)
+  float voltage = sensorValue * (3.3 / 4095.0); // Umrechnung in Volt
+  float current = voltage / SHUNT_RESISTOR; // Umrechnung in Ampere (mA)
 
-// Umrechnung des Stroms (mA) in Druck
-float pressure = MIN_PRESSURE + ((current - MIN_MA) / (MAX_MA - MIN_MA)) * (MAX_PRESSURE - MIN_PRESSURE);
-Serial.println(pressure);
+  // Umrechnung des Stroms (mA) in Druck
+  float pressure = MIN_PRESSURE + ((current - MIN_MA) / (MAX_MA - MIN_MA)) * (MAX_PRESSURE - MIN_PRESSURE);
+  Serial.println(pressure);
 
   // OTA update handling
   ArduinoOTA.handle();
-  }
-
-
 
   if (!client.connected()) {
     reconnect();
@@ -193,13 +187,6 @@ void setup_wifi() {
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
-
-  // mDNS setup
-  if (!MDNS.begin("esp32")) {
-    Serial.println("Error setting up MDNS responder!");
-  } else {
-    Serial.println("mDNS responder started");
-  }
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
@@ -209,7 +196,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
   }
 
   // If a message is received on the topic, you check if the message is either "on" or "off".
-  // Then you call either relayOn or relayOff function
   for (int i = 0; i < 8; i++) {
     String relayTopic = "/relay/" + String(i + 1);
     if (String(topic) == relayTopic) {
@@ -248,8 +234,6 @@ boolean reconnect() {
       // For SSR
       client.publish("/ssr", "off");
       client.subscribe("/ssr");
-
-     
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
