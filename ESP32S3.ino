@@ -127,7 +127,7 @@ Serial.println(pressure);
 char pressureMsg[50];
 snprintf(pressureMsg, 50, "%f", pressure);
 client.publish("pressure", pressureMsg);
-
+  }
 
   // OTA update handling
   ArduinoOTA.handle();
@@ -136,7 +136,7 @@ client.publish("pressure", pressureMsg);
     reconnect();
   }
   client.loop();
-}}
+}
 
 void sendData() {
   // Apply Kalman Filter
