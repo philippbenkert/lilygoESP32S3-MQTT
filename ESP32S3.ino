@@ -7,13 +7,23 @@
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 #include <WebServer.h>
+
 WebServer server(80);
 
-int sensorPin = 10; // der Pin, an dem der Sensor angeschlossen ist
+const int SENSOR_PIN = 10;
+const int MQTT_PORT = 1024;
+const int OTA_PORT = 80;
+const int SERIAL_BAUD_RATE = 115200;
+const int GPS_BAUD_RATE = 9600;
+const int RECONNECT_DELAY = 5000;
 
 void callback(char* topic, byte* payload, unsigned int length);
 void sendData();
 boolean reconnect();
+void berechneUndSendeDruck();
+void setup_wifi();
+void handleGPSData();
+
 
 // Kalman Filter variables
 double currentLatitude = 0.0;
@@ -33,14 +43,14 @@ const double outlierThreshold = 10.0;  // Adjust the threshold as needed
 bool isOutlier = false;
 
 // Replace with your network credentials
-const char* ssid = "YOUR_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
+const char* ssid = "SSID";
+const char* password = "PASSWORD";
 
 unsigned long lastSendTime = 0;
 bool isParked = false;
 
 // Replace with your MQTT Broker address
-const char* mqtt_server = "YOUR_MQTT_SERVER_ADDRESS";
+const char* mqtt_server = "192.168.0.1";
 
 // Shift register pins
 const int SER_Pin = 7;    //pin 14 on the 75HC595
@@ -67,71 +77,71 @@ PubSubClient client(espClient);
 void setup_wifi();
 
 void setup() {
-  Serial.begin(115200);
-  ss.begin(9600);
-  setup_wifi();
-  client.setServer(mqtt_server, 1883);  // MQTT default port is 1883
-  client.setCallback(callback);
+    Serial.begin(SERIAL_BAUD_RATE);
+    ss.begin(GPS_BAUD_RATE);
+    setup_wifi();
+    client.setServer(mqtt_server, MQTT_PORT);
+    client.setCallback(callback);
+    pinMode(ssrPin, OUTPUT);
 
-  pinMode(ssrPin, OUTPUT);
-
-  // OTA setup
-  MDNS.begin("esp32");  //http://esp32.local
-  server.begin();
-
-  MDNS.addService("http", "tcp", 80);
-  Serial.printf("HTTPUpdateServer ready! Open http://%s.local/update in your browser\n", WiFi.getHostname());
+    // OTA setup
+    MDNS.begin("esp32");
+    server.begin();
+    MDNS.addService("http", "tcp", OTA_PORT);
+    Serial.printf("HTTPUpdateServer bereit! Öffnen Sie http://%s.local/update in Ihrem Browser\n", WiFi.getHostname());
 }
 
+
 void loop() {
-  while (ss.available() > 0) {
-    gps.encode(ss.read());
-    if (gps.location.isUpdated()) {
-      // Überprüfen Sie, ob das Fahrzeug geparkt ist
-      if (gps.speed.kmph() < 2.0) {
+    handleGPSData();
+    berechneUndSendeDruck();
+    ArduinoOTA.handle();
+    if (!client.connected()) {
+        reconnect();
+    }
+    client.loop();
+}
+
+void handleGPSData() {
+    while (ss.available() > 0) {
+        gps.encode(ss.read());
+        if (gps.location.isUpdated()) {
+            handleFahrzeugStatus();
+        }
+    }
+}
+
+void handleFahrzeugStatus() {
+    // Überprüfen Sie, ob das Fahrzeug geparkt ist
+    if (gps.speed.kmph() < 2.0) {
         if (!isParked) {
-          // Wenn das Fahrzeug gerade parkiert hat, setzen Sie die Parkzeit und den Status
-          lastSendTime = millis();
-          isParked = true;
-        } else {
-          // Wenn das Fahrzeug bereits geparkt ist, überprüfen Sie, ob eine Stunde vergangen ist
-          if (millis() - lastSendTime >= 1800000) {
-            // Es ist eine Stunde vergangen, senden Sie die Daten und aktualisieren Sie die Sendezeit
+            lastSendTime = millis();
+            isParked = true;
+        } else if (millis() - lastSendTime >= 1800000) {
             sendData();
             lastSendTime = millis();
-          }
         }
-      } else {
-        // Wenn das Fahrzeug sich bewegt, überprüfen Sie, ob eine Sekunde vergangen ist
-        if (millis() - lastSendTime >= 1000 || isParked) {
-          // Es ist eine Sekunde vergangen oder das Fahrzeug hat gerade angefangen sich zu bewegen, senden Sie die Daten und aktualisieren Sie die Sendezeit
-          sendData();
-          lastSendTime = millis();
-          isParked = false;
-        }
-      }
+    } else if (millis() - lastSendTime >= 1000 || isParked) {
+        sendData();
+        lastSendTime = millis();
+        isParked = false;
     }
-  }
+}
 
-  int sensorValue = analogRead(sensorPin);
-  float voltage = sensorValue * (3.3 / 4095.0); // Umrechnung in Volt
-  float current = voltage / SHUNT_RESISTOR; // Umrechnung in Ampere (mA)
+void berechneUndSendeDruck() {
+    int sensorValue = analogRead(SENSOR_PIN);
+    float voltage = sensorValue * (3.3 / 4095.0);
+    float current = voltage / SHUNT_RESISTOR;
+    float pressure = MIN_PRESSURE + ((current - MIN_MA) / (MAX_MA - MIN_MA)) * (MAX_PRESSURE - MIN_PRESSURE);
 
-  // Umrechnung des Stroms (mA) in Druck
-  float pressure = MIN_PRESSURE + ((current - MIN_MA) / (MAX_MA - MIN_MA)) * (MAX_PRESSURE - MIN_PRESSURE);
-  Serial.println(pressure);
-  char pressureMsg[50];
-  snprintf(pressureMsg, 50, "%f", pressure);
-  client.publish("pressure", pressureMsg);
-
-  
-  // OTA update handling
-  ArduinoOTA.handle();
-
-  if (!client.connected()) {
-    reconnect();
-  }
-  client.loop();
+    static float lastPressure = 0.0;
+    if (isParked && abs(pressure - lastPressure) > 1.0) {  // Änderung von 1.0 als Beispiel für eine "wesentliche" Änderung
+        Serial.println(pressure);
+        char pressureMsg[50];
+        snprintf(pressureMsg, 50, "%f", pressure);
+        client.publish("pressure", pressureMsg);
+        lastPressure = pressure;
+    }
 }
 
 void sendData() {
@@ -175,22 +185,19 @@ void sendData() {
 }
 
 void setup_wifi() {
-  delay(10);
-  // Connect to WiFi network
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-
-  WiFi.begin(ssid, password);
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
+    delay(10);
+    Serial.println();
+    Serial.print("Verbindung zu ");
+    Serial.println(ssid);
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println("");
+    Serial.println("WiFi verbunden");
+    Serial.println("IP-Adresse: ");
+    Serial.println(WiFi.localIP());
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
