@@ -1,11 +1,11 @@
 ***** GROSSER DANK GEHT AN DIE ENTWICKLER VON CHATGPT! DER CODE IST IN 2 STUNDEN ENTSTANDEN, DIE MÖGLICHKEITEN IDEEN UMZUSETZEN SIND BEMERKENSWERT. DANK DER PLUGINS IST DIE BEGRENTZUNG DES WISSENSSTANDES AUF SEPTEMBER 2021 QUASI AUFGEHOBEN. ZUM DAMALIGEN ZEITPUNKT GAB ES DEN ESP32S3 ÜBERHAUPT NOCH NICHT UND DEMENTSPRECHEND KONNTEN KEINE DEMENTSPRECHENDEN CODES INS TRAININGSPROGRAMM VON CHATGPT 4 EINFLIESSEN. *****
 
+README.md
+Projektbeschreibung
+Dieses Projekt ist ein GPS-Tracker, der auf einem ESP32S3 basiert und Daten an einen MQTT-Broker sendet. Es verwendet einen Kalman-Filter, um die GPS-Daten zu glätten, und erkennt Ausreißer in den Daten. Zusätzlich liest es Daten von einem 4-20mA Drucksensor und sendet diese ebenfalls an den MQTT-Broker. Es unterstützt auch OTA-Updates und die Steuerung von Relais und einem Solid State Relay (SSR) über MQTT. Die GPS-Daten werden in Abhängigkeit davon, ob das Fahrzeug geparkt ist oder sich bewegt, gesendet.
 
-# README.md
-
-## Projektbeschreibung
-
-Dieses Projekt ist ein GPS-Tracker, der auf einem ESP32 basiert und Daten an einen MQTT-Broker sendet. Es verwendet einen Kalman-Filter, um die GPS-Daten zu glätten, und erkennt Ausreißer in den Daten. Zusätzlich liest es Daten von einem angeschlossenen Sensor und sendet diese ebenfalls an den MQTT-Broker. Es unterstützt auch OTA-Updates und die Steuerung von Relais und einem Solid State Relay (SSR) über MQTT. Die GPS-Daten werden in Abhängigkeit davon, ob das Fahrzeug geparkt ist oder sich bewegt, gesendet.
+Drucksensor
+Der Code enthält auch eine Implementierung für die Verarbeitung von Daten von einem 4-20mA Drucksensor. Der Sensor wird über einen Shunt-Widerstand angeschlossen, um den Strom in eine Spannung umzuwandeln, die vom ESP32S3 gelesen werden kann. Der Druck wird dann basierend auf dem gelesenen Strom berechnet.
 
 ## Abhängigkeiten
 
@@ -46,6 +46,12 @@ Die folgenden Pins werden in diesem Projekt verwendet:
 - TX (GPS Sensor): 13
 
 Bitte stellen Sie sicher, dass Sie Ihre Geräte entsprechend anschließen.
+
+Anschluss des 4-20mA Drucksensors
+Der positive (+) Anschluss des Sensors sollte an die +10VDC Versorgung angeschlossen werden.
+Der negative (-) oder Ausgangsanschluss des Sensors sollte an einen Ende des Shunt-Widerstands angeschlossen werden. Das andere Ende des Shunt-Widerstands sollte mit dem GND (Erdung) des ESP32S3 und der Stromversorgung verbunden sein.
+Der Punkt zwischen dem Sensorausgang und dem Shunt-Widerstand (wo die Spannung abgegriffen wird) sollte mit dem SENSOR_PIN (Pin 10) des ESP32S3 verbunden werden.
+Stellen Sie sicher, dass die erzeugte Spannung über dem Shunt-Widerstand innerhalb des zulässigen Eingangsspannungsbereichs des ESP32S3 liegt. Es könnte auch hilfreich sein, eine Schutzschaltung oder einen Spannungsteiler hinzuzufügen, um den Eingang des ESP32S3 zu schützen.
 
 ## Verwendung
 
