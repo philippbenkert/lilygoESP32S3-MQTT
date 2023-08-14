@@ -62,6 +62,9 @@ const int numOfShiftRegisters = 1;
 
 // Additional SSR pin
 const int ssrPin = 12;
+const int PWM_FREQUENCY = 1000; // PWM-Frequenz in Hz
+const int PWM_RESOLUTION = 8; // Auflösung der PWM (8 Bit = 0-255)
+
 
 // The serial connection to the GPS device
 SoftwareSerial ss(11, 13);  // RX, TX
@@ -83,12 +86,23 @@ void setup() {
     client.setServer(mqtt_server, MQTT_PORT);
     client.setCallback(callback);
     pinMode(ssrPin, OUTPUT);
+    ledcSetup(0, PWM_FREQUENCY, PWM_RESOLUTION); // Kanal 0, Frequenz, Auflösung
+    ledcAttachPin(ssrPin, 0); // Pin zu Kanal 0 zuweisen
 
     // OTA setup
     MDNS.begin("esp32");
     server.begin();
     MDNS.addService("http", "tcp", OTA_PORT);
     Serial.printf("HTTPUpdateServer bereit! Öffnen Sie http://%s.local/update in Ihrem Browser\n", WiFi.getHostname());
+    
+    // Zustände der Relais beim Booten senden
+    client.publish("/relay1", "off");
+    client.publish("/relay2", "off");
+    client.publish("/relay3", "off");
+    client.publish("/relay4", "off");
+    client.publish("/relay5", "off");
+    client.publish("/relay6", "off");
+    client.publish("/ssrPower", "0"); // Setzt die Heizleistung auf 0% beim Booten
 }
 
 
@@ -101,6 +115,12 @@ void loop() {
     }
     client.loop();
 }
+
+void setHeatingPower(int percentage) {
+    int pwmValue = map(percentage, 0, 100, 0, 255);
+    ledcWrite(0, pwmValue);
+}
+
 
 void handleGPSData() {
     while (ss.available() > 0) {
@@ -207,7 +227,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
   }
 
   // If a message is received on the topic, you check if the message is either "on" or "off".
-  for (int i = 0; i < 8; i++) {
+  for (int i = 0; i < 6; i++) {
     String relayTopic = "/relay/" + String(i + 1);
     if (String(topic) == relayTopic) {
       if (messageTemp == "on") {
@@ -219,13 +239,25 @@ void callback(char* topic, byte* payload, unsigned int length) {
   }
 
   // For SSR
-  if (String(topic) == "/ssr") {
-    if (messageTemp == "on") {
-      digitalWrite(ssrPin, HIGH);
-    } else if (messageTemp == "off") {
-      digitalWrite(ssrPin, LOW);
+  if (String(topic) == "/ssrPower") {
+        String messageTemp;
+        for (int i = 0; i < length; i++) {
+            messageTemp += (char)payload[i];
+        }
+        int powerPercentage = messageTemp.toInt();
+        setHeatingPower(powerPercentage);
+    } else if (String(topic) == "/ssr") {
+        // Behalten Sie den vorhandenen Code bei, um das SSR ein- und auszuschalten
+        String messageTemp;
+        for (int i = 0; i < length; i++) {
+            messageTemp += (char)payload[i];
+        }
+        if (messageTemp == "on") {
+            setHeatingPower(100); // Setzt die Heizleistung auf 100%
+        } else if (messageTemp == "off") {
+            setHeatingPower(0); // Schaltet die Heizung aus
+        }
     }
-  }
 }
 
 boolean reconnect() {
@@ -236,9 +268,9 @@ boolean reconnect() {
     if (client.connect("ESP32Client")) {
       Serial.println("connected");
       // Once connected, publish an announcement...
-      for (int i = 0; i < 8; i++) {
+      for (int i = 0; i < 6; i++) {
         String relayTopic = "/relay/" + String(i + 1);
-        client.publish(relayTopic.c_str(), "hello world");
+        client.publish(relayTopic.c_str(), "off");
         client.subscribe(relayTopic.c_str());
       }
 
