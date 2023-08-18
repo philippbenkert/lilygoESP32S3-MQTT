@@ -19,7 +19,7 @@ const int SER_Pin = 7, RCLK_Pin = 5, SRCLK_Pin = 6, numOfShiftRegisters = 1, ssr
 const int PWM_FREQUENCY = 1000, PWM_RESOLUTION = 8;
 const float SHUNT_RESISTOR = 150.0, MIN_MA = 4.0, MAX_MA = 20.0, MIN_PRESSURE = 0.0, MAX_PRESSURE = 100.0;
 const double outlierThreshold = 10.0;
-const float alpha = 0.1; // Dies ist der Glättungsfaktor. Werte näher bei 1 bedeuten weniger Glättung, Werte näher bei 0 bedeuten mehr Glättung.
+const float alpha = 0.2; // Dies ist der Glättungsfaktor. Werte näher bei 1 bedeuten weniger Glättung, Werte näher bei 0 bedeuten mehr Glättung.
 static float pressureCmFiltered = 0; // Dieser Wert speichert den gefilterten Druck.
 static float lastSentPressureCm = 0.0;
 unsigned long lastPressureSentTime = 0;
@@ -37,7 +37,7 @@ bool waterPressureAlarm = false; // Zu Beginn des Programms, kurz nach den ander
 
 
 // Network credentials
-const char* ssid = "ssie";
+const char* ssid = "ssid";
 const char* password = "password";
 const char* mqtt_server = "192.168.0.1";
 
@@ -79,17 +79,17 @@ void setup() {
         client.publish(relayTopic, "off");
         client.subscribe(relayTopic);
     }
-    client.publish("/ssr", "off");
+    client.publish("/ssr", "false");
     client.subscribe("/ssr");
     client.publish("/ssrPower", "0");
     client.subscribe("/ssrPower");
     client.publish("/MinDruck", String(MinDruck).c_str());
     client.subscribe("/MinDruck");
-    client.publish("/Wasserversorgung", Wasserversorgung ? "on" : "off");
+    client.publish("/Wasserversorgung", Wasserversorgung ? "true" : "false");
     client.subscribe("/Wasserversorgung");
-    client.publish("/Boilerheizung", Boilerheizung ? "on" : "off");
+    client.publish("/Boilerheizung", Boilerheizung ? "true" : "false");
     client.subscribe("/Boilerheizung");
-    client.publish("/UVCLicht", UVCLicht ? "on" : "off");
+    client.publish("/UVCLicht", UVCLicht ? "true" : "false");
     client.subscribe("/UVCLicht");
 
     preferences.begin("settings", false); // Öffnen Sie den Namespace "settings" im Lese-/Schreibmodus
@@ -118,11 +118,11 @@ void handleSaveSettings() {
     for (int i = 0; i < 6; i++) {
         String relayArg = "relay" + String(i + 1);
         if (server.hasArg(relayArg)) {
-            relayStates[i] = server.arg(relayArg) == "on";
+            relayStates[i] = server.arg(relayArg) == "true";
         }
     }
     if (server.hasArg("ssr")) {
-        ssrState = server.arg("ssr") == "on";
+        ssrState = server.arg("ssr") == "true";
     }
     if (server.hasArg("ssrPower")) {
         ssrPower = server.arg("ssrPower").toInt();
@@ -200,24 +200,24 @@ void manageWaterAndHeating() {
         Wasserversorgung = false;
         if (relayStates[5]) { // Überprüfen Sie, ob das Relais bereits ausgeschaltet ist
             sr.set(5, LOW);
-            client.publish("/relay/6", "off");
+            client.publish("/relay/6", "false");
             relayStates[5] = false;
         }
         setHeatingPower(0);
     } else {
         sr.set(5, HIGH);
-        client.publish("/relay/6", "on");
+        client.publish("/relay/6", "true");
         if (Boilerheizung) {
             static unsigned long heatingStartTime = millis();
             if (millis() - heatingStartTime > 10000) {
                 setHeatingPower(ssrPower);
-                client.publish("/Boilerheizung", "on");
-                client.publish("/ssr", "on");
+                client.publish("/Boilerheizung", "true");
+                client.publish("/ssr", "true");
                 heatingStartTime = millis();
             }
         } else {
             setHeatingPower(0);
-            client.publish("/ssr", "off");
+            client.publish("/ssr", "false");
         }
     }
 }
@@ -324,7 +324,7 @@ void setup_wifi() {
 
 
 void handleRelays(int index, const char* payload) {
-    sr.set(index, strcmp(payload, "on") == 0 ? HIGH : LOW);
+    sr.set(index, strcmp(payload, "true") == 0 ? HIGH : LOW);
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
@@ -334,7 +334,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     if (strncmp(topic, "/relay/", 7) == 0) {
         int relayIndex = topic[7] - '1';
         if (relayIndex >= 0 && relayIndex < 6) {
-            relayStates[relayIndex] = strcmp((char*)payload, "on") == 0;
+            relayStates[relayIndex] = strcmp((char*)payload, "true") == 0;
             handleRelays(relayIndex, (char*)payload);
             return;
         }
@@ -398,11 +398,11 @@ void handleRoot() {
 
     html += "<h2>Relais Zustände</h2>";
     for (int i = 0; i < 6; i++) {
-        html += "Relais " + String(i + 1) + ": " + (relayStates[i] ? "ON" : "OFF") + "<br>";
+        html += "Relais " + String(i + 1) + ": " + (relayStates[i] ? "true" : "false") + "<br>";
     }
 
     html += "<h2>SSR Zustand</h2>";
-    html += "SSR: " + String(ssrState ? "ON" : "OFF") + "<br>";
+    html += "SSR: " + String(ssrState ? "true" : "false") + "<br>";
     html += "SSR Power: " + String(ssrPower) + "%<br>";
 
     html += "<h2>Wasservolumen</h2>";
@@ -429,7 +429,7 @@ boolean reconnect() {
                 client.publish("/ssrPower", "0");
 
                 // Abonnieren von weiteren Topics
-                client.publish("/ssr", "off");
+                client.publish("/ssr", "false");
                 client.subscribe("/ssr");
                 client.subscribe("/ssrPower");
                 client.subscribe("/MinDruck");
