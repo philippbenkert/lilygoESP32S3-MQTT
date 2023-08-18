@@ -209,11 +209,12 @@ void manageWaterAndHeating() {
         client.publish("/relay/6", "true");
         if (Boilerheizung) {
             static unsigned long heatingStartTime = millis();
-            if (millis() - heatingStartTime > 10000) {
-                setHeatingPower(ssrPower);
                 client.publish("/Boilerheizung", "true");
                 client.publish("/ssr", "true");
                 heatingStartTime = millis();
+            if (millis() - heatingStartTime > 10000) {
+                setHeatingPower(ssrPower);
+                
             }
         } else {
             setHeatingPower(0);
@@ -369,6 +370,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
             Boilerheizung = true;
             Wasserversorgung = true;
             client.publish("/Wasserversorgung", "true");
+            client.publish("/ssr", "true");
         } else if (strPayload == "false") {
             Boilerheizung = false;
             client.publish("/ssr", "false");
