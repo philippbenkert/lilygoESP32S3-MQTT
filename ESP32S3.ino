@@ -28,17 +28,17 @@ unsigned long lastPressureSentTime = 0;
 // Variables
 double currentLatitude = 0.0, currentLongitude = 0.0, kalmanGain = 0.0, previousLatitude = 0.0, previousLongitude = 0.0;
 float pressure = 0.0, MinDruck = 2.0, pressure_cm = 0.0;
-bool Wasserversorgung = false, Boilerheizung = false, UVCLicht = false, isOutlier = false, isParked = false;
+bool Wasserversorgung = false, Boilerheizung = false, UVCLicht = false, isOutlier = false, isParked = false, Kuehlschrankgross, Kuehlschrankklein;
 unsigned long lastSendTime = 0;
 bool relayStates[6] = {false, false, false, false, false, false};
 bool ssrState = false;
-int ssrPower = 0;
+int ssrPower = 100;
 bool waterPressureAlarm = false; // Zu Beginn des Programms, kurz nach den anderen Variablen
 
 
 // Network credentials
 const char* ssid = "ssid";
-const char* password = "password";
+const char* password = "passord";
 const char* mqtt_server = "192.168.0.1";
 
 SoftwareSerial ss(11, 13);
@@ -81,9 +81,7 @@ void setup() {
     }
     client.publish("/ssr", "false");
     client.subscribe("/ssr");
-    client.publish("/ssrPower", "0");
     client.subscribe("/ssrPower");
-    client.publish("/MinDruck", String(MinDruck).c_str());
     client.subscribe("/MinDruck");
     client.publish("/Wasserversorgung", Wasserversorgung ? "true" : "false");
     client.subscribe("/Wasserversorgung");
@@ -91,6 +89,9 @@ void setup() {
     client.subscribe("/Boilerheizung");
     client.publish("/UVCLicht", UVCLicht ? "true" : "false");
     client.subscribe("/UVCLicht");
+    client.subscribe("/Kuehlschrankgross");
+    client.subscribe("/Kuehlschrankklein");
+    
 
     preferences.begin("settings", false); // Öffnen Sie den Namespace "settings" im Lese-/Schreibmodus
     ssid = preferences.getString("ssid", "Wolf Verschwindibus").c_str();
@@ -324,20 +325,56 @@ void setup_wifi() {
 }
 
 
-void handleRelays(int index, const char* payload) {
-    sr.set(index, strcmp(payload, "true") == 0 ? HIGH : LOW);
+void handleRelays(int index, bool state) {
+    sr.set(index, state ? HIGH : LOW);
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
     payload[length] = '\0';  // Füge ein Nullzeichen am Ende der Payload hinzu, um sie in einen gültigen C-String zu konvertieren
     String strPayload = String((char*)payload);  // Konvertiere Payload in einen Arduino String
 
+    Serial.print("Received on topic: ");
+    Serial.println(topic);
+    Serial.print("Payload: ");
+    Serial.println(strPayload);
+
     if (strncmp(topic, "/relay/", 7) == 0) {
         int relayIndex = topic[7] - '1';
         if (relayIndex >= 0 && relayIndex < 6) {
             relayStates[relayIndex] = strcmp((char*)payload, "true") == 0;
             handleRelays(relayIndex, (char*)payload);
+            Serial.print("Setting relay ");
             return;
+        }
+                Serial.print(relayIndex + 1);
+        Serial.print(" to ");
+        Serial.println(relayStates[relayIndex] ? "ON" : "OFF");
+    }
+
+
+    if (String(topic) == "/Kuehlschrankgross") {
+        if (strPayload == "true") {
+            sr.set(2, HIGH);  // Setze das 5. Relais (0-indexed) auf HIGH
+            client.publish("/relay/3", "true");
+            relayStates[2] = true;
+        } else if (strPayload == "false") {
+            sr.set(2, LOW);  // Setze das 5. Relais (0-indexed) auf LOW
+            client.publish("/relay/3", "false");
+            relayStates[2] = false;
+        }
+                Serial.println("Setting Kuehlschrankgross relay");
+
+    }
+
+    if (String(topic) == "/Kuehlschrankklein") {
+        if (strPayload == "true") {
+            sr.set(3, HIGH);  // Setze das 5. Relais (0-indexed) auf HIGH
+            client.publish("/relay/4", "true");
+            relayStates[3] = true;
+        } else if (strPayload == "false") {
+            sr.set(3, LOW);  // Setze das 5. Relais (0-indexed) auf LOW
+            client.publish("/relay/4", "false");
+            relayStates[3] = false;
         }
     }
 
@@ -361,6 +398,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
             client.publish("/relay/6", "false");
             sr.set(5, LOW);
             client.publish("/Boilerheizung", "false");
+
             Boilerheizung = false;
         }
     }
@@ -377,12 +415,13 @@ void callback(char* topic, byte* payload, unsigned int length) {
         }
     }
 
+  
+
     const char* topicStr = (char*)topic;
     if (strcmp(topicStr, "/ssrPower") == 0) {
         ssrPower = atoi((char*)payload);
-    } else if (strcmp(topicStr, "/ssr") == 0) {
-        ssrState = strcmp((char*)payload, "true") == 0;
-        setHeatingPower(ssrState ? 100 : 0);
+        Serial.print("Setting SSR power to: ");
+        Serial.println(ssrPower);
     } else if (strcmp(topicStr, "/Wasserversorgung") == 0) {
         Wasserversorgung = strcmp((char*)payload, "true") == 0;
     } else if (strcmp(topicStr, "/Boilerheizung") == 0) {
@@ -391,6 +430,10 @@ void callback(char* topic, byte* payload, unsigned int length) {
         UVCLicht = strcmp((char*)payload, "true") == 0;
     } else if (strcmp(topicStr, "MinDruck") == 0) {
         MinDruck = atof((char*)payload);
+    }   else if (strcmp(topicStr, "/Kuehlschrankgross") == 0) {
+        Kuehlschrankgross = strcmp((char*)payload, "true") == 0;
+    }   else if (strcmp(topicStr, "/Kuehlschrankklein") == 0) {
+        Kuehlschrankklein = strcmp((char*)payload, "true") == 0;
     }
 }
 
@@ -428,7 +471,6 @@ boolean reconnect() {
                     client.publish(relayTopic, "off");
                     client.subscribe(relayTopic);
                 }
-                client.publish("/ssrPower", "0");
 
                 // Abonnieren von weiteren Topics
                 client.publish("/ssr", "false");
@@ -438,6 +480,8 @@ boolean reconnect() {
                 client.subscribe("/Wasserversorgung");
                 client.subscribe("/Boilerheizung");
                 client.subscribe("/UVCLicht");
+                client.subscribe("/Kuehlschrankgross");
+                client.subscribe("/Kuehlschrankklein");
                 return true;
             } else {
                 Serial.print("failed, rc=");
