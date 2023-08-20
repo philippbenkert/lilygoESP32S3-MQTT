@@ -15,8 +15,8 @@ Preferences preferences;
 
 // Constants
 const int SENSOR_PIN = 14, MQTT_PORT = 1024, OTA_PORT = 80, SERIAL_BAUD_RATE = 115200, GPS_BAUD_RATE = 9600;
-const int SER_Pin = 7, RCLK_Pin = 5, SRCLK_Pin = 6, numOfShiftRegisters = 1, ssrPin = 12;
-const int PWM_FREQUENCY = 1000, PWM_RESOLUTION = 8;
+const int SER_Pin = 7, RCLK_Pin = 5, SRCLK_Pin = 6, numOfShiftRegisters = 1, ssrPin = 45;
+const int PWM_FREQUENCY = 100, PWM_RESOLUTION = 8;
 const float SHUNT_RESISTOR = 150.0, MIN_MA = 4.0, MAX_MA = 20.0, MIN_PRESSURE = 0.0, MAX_PRESSURE = 100.0;
 const double outlierThreshold = 10.0;
 const float alpha = 0.2; // Dies ist der Glättungsfaktor. Werte näher bei 1 bedeuten weniger Glättung, Werte näher bei 0 bedeuten mehr Glättung.
@@ -38,7 +38,7 @@ bool waterPressureAlarm = false; // Zu Beginn des Programms, kurz nach den ander
 
 // Network credentials
 const char* ssid = "ssid";
-const char* password = "passord";
+const char* password = "password";
 const char* mqtt_server = "192.168.0.1";
 
 SoftwareSerial ss(11, 13);
@@ -94,8 +94,8 @@ void setup() {
     
 
     preferences.begin("settings", false); // Öffnen Sie den Namespace "settings" im Lese-/Schreibmodus
-    ssid = preferences.getString("ssid", "Wolf Verschwindibus").c_str();
-    password = preferences.getString("password", "Philipp22121982").c_str();
+    ssid = preferences.getString("ssid", "ssid").c_str();
+    password = preferences.getString("password", "password").c_str();
     MinDruck = preferences.getFloat("MinDruck", 2.0);
 
     // Webserver-Endpunkte
@@ -193,6 +193,10 @@ void loop() {
 void setHeatingPower(int percentage) {
     int pwmValue = map(percentage, 0, 100, 0, 255);
     ledcWrite(0, pwmValue);
+    // Debug-Ausgabe für gesetzte Heizleistung
+    Serial.print("Setting heating power to: ");
+    Serial.print(percentage);
+    Serial.println("%");
 }
 
 void manageWaterAndHeating() {
@@ -218,8 +222,7 @@ void manageWaterAndHeating() {
                 
             }
         } else {
-            setHeatingPower(0);
-            client.publish("/ssr", "false");
+            
         }
     }
 }
@@ -393,6 +396,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
     if (String(topic) == "/Wasserversorgung") {
         if (strPayload == "true") {
             Wasserversorgung = true;
+            sr.set(5, HIGH);
+            client.publish("/relay/6", "true");
         } else if (strPayload == "false") {
             Wasserversorgung = false;
             client.publish("/relay/6", "false");
@@ -409,9 +414,12 @@ void callback(char* topic, byte* payload, unsigned int length) {
             Wasserversorgung = true;
             client.publish("/Wasserversorgung", "true");
             client.publish("/ssr", "true");
+            setHeatingPower(ssrPower);
+
         } else if (strPayload == "false") {
             Boilerheizung = false;
             client.publish("/ssr", "false");
+            setHeatingPower(0);
         }
     }
 
