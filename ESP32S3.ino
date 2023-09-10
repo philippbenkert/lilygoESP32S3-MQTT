@@ -10,6 +10,7 @@
 #include <Preferences.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <U8g2lib.h> // Für den U-blox M8N GPS-Empfänger
 
 WebServer server(80);
 Preferences preferences;
@@ -54,8 +55,10 @@ char ssid[] = "ssid";
 char password[] = "password";
 const char* mqtt_server = "192.168.0.1";
 
-SoftwareSerial ss(10, 11);
-Adafruit_GPS GPS(&ss);
+//SoftwareSerial ss(10, 11);
+//Adafruit_GPS GPS(&ss);
+Adafruit_GPS GPS(&Serial1);
+
 ShiftRegister74HC595<numOfShiftRegisters> sr(SER_Pin, RCLK_Pin, SRCLK_Pin);
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -73,9 +76,9 @@ void handleRoot();
 void setup() {
     analogSetAttenuation(ADC_11db);
     Serial.begin(SERIAL_BAUD_RATE);
-    ss.begin(9600);  // Baudrate des GPS-Empfängers
+    Serial1.begin(9600, SERIAL_8N1, 10, 11);
     GPS.begin(9600);  // Baudrate des GPS-Empfängers
-    //GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);  // NMEA Ausgabe konfigurieren
+    GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);  // NMEA Ausgabe konfigurieren
     GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);     // Aktualisierungsrate auf 1Hz setzen
     setup_wifi();
     client.setServer(mqtt_server, MQTT_PORT);
@@ -254,7 +257,7 @@ void loop() {
 }
 
 
-}
+
 
 void setHeatingPower(int percentage) {
     int pwmValue = map(percentage, 0, 100, 0, 255);
@@ -289,8 +292,8 @@ void handleGPSData() {
     unsigned long currentMillis = millis();
     synchronizeTimeWithGPS(); // Fügen Sie diese Zeile hinzu
     // Überprüfen, ob seit dem letzten Verarbeiten der GPS-Daten 2 Sekunden vergangen sind
-    if (currentMillis - lastGPSCheckTime >= 2000) {
-        while (ss.available()) {
+    if (currentMillis - lastGPSCheckTime >= 1000) {
+        while (Serial1.available()) {
             char c = GPS.read();
 
             if (GPS.newNMEAreceived()) {
@@ -301,11 +304,11 @@ void handleGPSData() {
                         if (!isParked) {
                             lastSendTime = currentMillis;
                             isParked = true;
-                        } else if (currentMillis - lastSendTime >= 1800000) {
+                        } else if (currentMillis - lastSendTime >= 5000) {
                             sendData();
                             lastSendTime = currentMillis;
                         }
-                    } else if (currentMillis - lastSendTime >= 2000 || isParked) {
+                    } else if (currentMillis - lastSendTime >= 1000 || isParked) {
                         sendData();
                         lastSendTime = currentMillis;
                         isParked = false;
