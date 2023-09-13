@@ -10,7 +10,7 @@
 #include <Preferences.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
-#include <U8g2lib.h> // Für den U-blox M8N GPS-Empfänger
+#include <MHZ19.h>  // Include the MH-Z19B library
 
 WebServer server(80);
 Preferences preferences;
@@ -34,9 +34,17 @@ OneWire oneWire(DS18B20_PIN);
 DallasTemperature sensors(&oneWire);
 DeviceAddress tempDeviceAddress; // Globale Deklaration der DS18B20-Adresse
 float currentSpeedKnots = 0.0;
+float currentSpeedkmh = 0.0;
 
 const unsigned long HEARTBEAT_INTERVAL = 1000; // 1 Sekunden
 unsigned long lastHeartbeatTime = 0;
+
+// MH-Z19B Configuration
+#define RX_PIN 15  // Rx pin which the MHZ19 Tx pin is attached to
+#define TX_PIN 18  // Tx pin which the MHZ19 Rx pin is attached to
+MHZ19 mhz19;  // Create an instance of the MHZ19 class
+
+unsigned long lastCO2SendTime = 0;  // Timestamp of the last CO2 data sent
 
 
 // Variables
@@ -87,6 +95,10 @@ void setup() {
     ledcSetup(0, PWM_FREQUENCY, PWM_RESOLUTION);
     ledcAttachPin(ssrPin, 0);
     sensors.begin();
+    // MH-Z19B Initialization
+    Serial2.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);  // Initialize Serial2 for MH-Z19B
+    mhz19.begin(Serial2);  // Pass the hardware serial to the MHZ19 class
+    mhz19.autoCalibration();  // Enable auto-calibration
     if (!sensors.getAddress(tempDeviceAddress, 0)) {
         Serial.println("Kein DS18B20 Sensor gefunden!");
     } else {
@@ -254,6 +266,14 @@ void loop() {
         lastHeartbeatTime = millis();
     }
 
+    // Send CO2 data every 5 seconds
+    if (millis() - lastCO2SendTime >= 5000) {
+        int co2_ppm = mhz19.getCO2();  // Get CO2 concentration in ppm
+        char co2Msg[50];
+        snprintf(co2Msg, 50, "%d", co2_ppm);
+        client.publish("/CO2", co2Msg);
+        lastCO2SendTime = millis();
+    }
 }
 
 
@@ -290,17 +310,19 @@ void synchronizeTimeWithGPS() {
 void handleGPSData() {
     static unsigned long lastGPSCheckTime = 0; // Zeitpunkt der letzten GPS-Datenverarbeitung
     unsigned long currentMillis = millis();
-    synchronizeTimeWithGPS(); // Fügen Sie diese Zeile hinzu
+        synchronizeTimeWithGPS(); // Fügen Sie diese Zeile hinzu
     // Überprüfen, ob seit dem letzten Verarbeiten der GPS-Daten 2 Sekunden vergangen sind
     if (currentMillis - lastGPSCheckTime >= 1000) {
         while (Serial1.available()) {
             char c = GPS.read();
 
+            if (GPS.fix) {
             if (GPS.newNMEAreceived()) {
                 if (GPS.parse(GPS.lastNMEA())) {
                     currentSpeedKnots = GPS.speed;
+                    currentSpeedkmh = currentSpeedKnots * 1.852;
 
-                    if (currentSpeedKnots < 2) {  // Geschwindigkeitsgrenze in Knoten
+                    if (currentSpeedkmh < 1) {  // Geschwindigkeitsgrenze in Knoten
                         if (!isParked) {
                             lastSendTime = currentMillis;
                             isParked = true;
@@ -314,6 +336,7 @@ void handleGPSData() {
                         isParked = false;
                     }
                 }
+            }
             }
         }
         lastGPSCheckTime = currentMillis; // Aktualisieren des Zeitpunkts der letzten GPS-Datenverarbeitung
@@ -411,7 +434,7 @@ void sendData() {
         char latMsg[50], lonMsg[50], speedMsg[50], altMsg[50];
         snprintf(latMsg, 50, "%f", filteredLatitude);
         snprintf(lonMsg, 50, "%f", filteredLongitude);
-        snprintf(speedMsg, 50, "%f", GPS.speed);  // Assuming speed is in knots
+        snprintf(speedMsg, 50, "%f", currentSpeedkmh);  // Assuming speed is in knots
         snprintf(altMsg, 50, "%f", GPS.altitude);  // Assuming altitude is in meters
         client.publish("latitude", latMsg);
         client.publish("longitude", lonMsg);
