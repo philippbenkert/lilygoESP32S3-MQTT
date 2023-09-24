@@ -2,7 +2,7 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ShiftRegister74HC595.h>
-#include <Adafruit_GPS.h>
+#include <TinyGPS++.h>
 #include <ESPmDNS.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
@@ -10,45 +10,135 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include "MHZ19.h"
-
+#include <array>
+#include <unordered_map>
+#include <functional>
 
 MHZ19 myMHZ19;
 HardwareSerial mySerial(2);
 
 // 2. Konstanten definieren
-const int SENSOR_PIN = 14, MQTT_PORT = 1024, OTA_PORT = 80, SERIAL_BAUD_RATE = 115200, GPS_BAUD_RATE = 9600;
-const int SER_Pin = 7, RCLK_Pin = 5, SRCLK_Pin = 6, numOfShiftRegisters = 1, ssrPin = 13;
-const int PWM_FREQUENCY = 1000, PWM_RESOLUTION = 8;
-const float MIN_PRESSURE = 0.0, MAX_PRESSURE = 100.0;
-const double outlierThreshold = 10.0;
-const float alpha = 0.2;
-const int DS18B20_PIN = 9;
-const unsigned long HEARTBEAT_INTERVAL = 2000;
-const unsigned long HEAP_SEND_INTERVAL = 10000;
-const unsigned long CHECK_INTERVAL = 10000;
-
-// 3. Globale Variablen definieren
+constexpr int DS18B20_PIN = 9;
+constexpr int SER_Pin = 7;
+constexpr int RCLK_Pin = 5;
+constexpr int SRCLK_Pin = 6;
+constexpr int numOfShiftRegisters = 1;
 WebServer server(80);
 OneWire oneWire(DS18B20_PIN);
 DallasTemperature sensors(&oneWire);
 DeviceAddress tempDeviceAddress;
-Adafruit_GPS GPS(&Serial1);
+TinyGPSPlus GPS;
 ShiftRegister74HC595<numOfShiftRegisters> sr(SER_Pin, RCLK_Pin, SRCLK_Pin);
 WiFiClient espClient;
 PubSubClient client(espClient);
 unsigned long heatingStartTime, lastExecutionTime, lastGPSCheckTime, lastGPSSyncTime, currentMillis, lastExecutionTime1, currentTemperature, lastSendTime, lastExecutionTimeDruck, lastPressureSentTime, lastHeartbeatTime, lastCO2SendTime, lastCheckTime, lastHeapSendTime, lastTempSentTime, startTime;
 double filteredLatitude, filteredLongitude, previousLatitude, previousLongitude, kalmanGain;
-float currentSpeedKnots, currentSpeedkmh, pressure, MinDruck, pressure_cm, pressureCmFiltered = 0, lastSentPressureCm = 0.0, voltage, pressure_kPa, pressure_L;
-bool relayStates[6] = { false, false, false, false, false, false }, Wasserversorgung = false, Boilerheizung = false, UVCLicht = false, isOutlier = false, isParked = false, Kuehlschrankgross, Kuehlschrankklein, Inverter, ssrState = false, waterPressureAlarm = false;
+float currentSpeedkmh, pressure, MinDruck, pressure_cm, pressureCmFiltered = 0, lastSentPressureCm = 0.0, voltage, pressure_kPa, pressure_L;
+std::array<bool, 6> relayStates = { false, false, false, false, false, false };
+bool Wasserversorgung = false, Boilerheizung = false, UVCLicht = false, isOutlier = false, isParked = false, Kuehlschrankgross, Kuehlschrankklein, Inverter, ssrState = false, waterPressureAlarm = false, state;
 int disconnectCount = 0, ssrPower = 100, sensorValue, pwmValue, co2_ppm;
-char tempMsg[50], heapMsg[50], latMsg[50], lonMsg[50], speedMsg[50], altMsg[50], c, pressureMsg[50] = { 0 }, co2Msg[50], relayTopic[50];
+std::array<char, 50> tempMsg, heapMsg, latMsg, lonMsg, speedMsg, altMsg, co2Msg;
+std::array<char, 50> pressureMsg = { 0 };
 const char* topicStr;
-String lastDisconnectReason = "Unknown";
+//char c;
+const char* lastDisconnectReason = "Unknown";
 
 // 4. Netzwerkkonfiguration
-char ssid[] = "ssid";
-char password[] = "password";
+char ssid[] = "Wolf Verschwindibus";
+char password[] = "Philipp22121982";
 const char* mqtt_server = "192.168.0.1";
+const char* command = "PMTK353,1,1,0,0,0";
+unsigned char checksum = 0;
+constexpr int SENSOR_PIN = 14;
+constexpr int MQTT_PORT = 1024;
+constexpr int OTA_PORT = 80;
+constexpr int SERIAL_BAUD_RATE = 115200;
+constexpr int GPS_BAUD_RATE = 9600;
+
+constexpr int ssrPin = 13;
+constexpr int PWM_FREQUENCY = 1000;
+constexpr int PWM_RESOLUTION = 8;
+constexpr float MIN_PRESSURE = 0.0;
+constexpr float MAX_PRESSURE = 100.0;
+constexpr double outlierThreshold = 10.0;
+constexpr float alpha = 0.2;
+constexpr unsigned long HEARTBEAT_INTERVAL = 2000;
+constexpr unsigned long HEAP_SEND_INTERVAL = 10000;
+constexpr unsigned long CHECK_INTERVAL = 10000;
+constexpr char TRUE_STR[] = "true";
+constexpr char FALSE_STR[] = "false";
+constexpr char relayTopics[][9] = {"/relay/1", "/relay/2", "/relay/3", "/relay/4", "/relay/5", "/relay/6"};
+constexpr char PMTK_SET_NMEA_OUTPUT_RMCGNS[] = "$PMTK314,1,1,5,1,5,5,0,0,0,0,0,0,0,0,0,0,0,0*28\r\n";
+constexpr int MIN_SATELLITES = 6;
+constexpr int MAX_HDOP = 150;
+constexpr float SPEED_THRESHOLD = 2.0f;
+constexpr unsigned long PARKED_SEND_INTERVAL = 5000;
+constexpr unsigned long MOVING_SEND_INTERVAL = 1000;
+constexpr int MAX_GPS_ITERATIONS = 10;
+constexpr unsigned long EXECUTION_INTERVAL = 2000;
+constexpr unsigned long HEATING_START_INTERVAL = 10000;
+constexpr double ADC_MAX_VALUE = 4095.0;
+constexpr double ADC_VOLTAGE = 3.3;
+constexpr double GRAVITY_ACCELERATION = 9.81;
+constexpr double KALMAN_GAIN = 0.4;
+inline void handleTopicAction(int relayIndex, const char* logMessage, const char* payload) {
+    bool localState = (strcmp(payload, TRUE_STR) == 0);
+    
+    // Check if the state has changed
+    if (relayStates[relayIndex] != localState) {
+        // Set relay state
+        sr.set(relayIndex, localState ? HIGH : LOW);
+        relayStates[relayIndex] = localState;
+
+        // Publish relay topic
+        client.publish(relayTopics[relayIndex], localState ? TRUE_STR : FALSE_STR);
+
+        // Log message if provided
+        if (logMessage) {
+        }
+    }
+}
+using Handler = std::function<void(const char*)>;
+
+    static std::unordered_map<std::string, Handler> handlers = {
+        {"/ssrPower", [](const char* payload) {
+            ssrPower = atoi(payload);
+        }},
+        {"/Inverter", [](const char* payload) {
+            handleTopicAction(1, "Setting Inverter relay", payload);
+        }},
+        {"/Kuehlschrankgross", [](const char* payload) {
+            handleTopicAction(2, "Setting Kuehlschrankgross relay", payload);
+        }},
+        {"/Kuehlschrankklein", [](const char* payload) {
+            handleTopicAction(3, nullptr, payload);
+        }},
+        {"/UVCLicht", [](const char* payload) {
+            handleTopicAction(4, nullptr, payload);
+        }},
+        {"/Wasserversorgung", [](const char* payload) {
+            handleTopicAction(5, nullptr, payload);
+        }},
+        {"/Boilerheizung", [](const char* payload) {
+            state = (strcmp(payload, "true") == 0);
+            Boilerheizung = state;
+            Wasserversorgung = state;
+            client.publish("/Wasserversorgung", state ? "true" : "false");
+            client.publish("/ssr", state ? "true" : "false");
+            setHeatingPower(state ? ssrPower : 0);
+        }},
+        {"/MinDruck", [](const char* payload) {  // Hinzugefügter Handler für MinDruck
+            MinDruck = atof(payload);
+        }},
+        {"/calibrateCO2", [](const char* payload) {
+            if (strcmp(payload, "true") == 0) {
+                calibrateCO2Sensor();
+            }
+        }}
+    };
+
+// 3. Globale Variablen definieren
+
 
 
 // 5. Funktionen und Hilfsfunktionen
@@ -85,11 +175,9 @@ void setHeatingPower();
 
 void sendStartupMessage() {
   if (client.connected()) {
-    String message;
-    message.reserve(50);  // Reserve memory for the maximum expected size
-    message = "ESP32 has rebooted. Reason: ";
-    message += resetReason(esp_reset_reason());
-    client.publish("/esp32/startup", message.c_str());
+    char message[100];
+snprintf(message, sizeof(message), "ESP32 has rebooted. Reason: %s", resetReason(esp_reset_reason()));
+client.publish("/esp32/startup", message);
   }
 }
 
@@ -98,24 +186,16 @@ void initializeSerial() {
   Serial1.begin(9600, SERIAL_8N1, 10, 11);
 }
 
-void initializeGPS() {
-  GPS.begin(9600);                               // Baudrate des GPS-Empfängers
-  GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);  // NMEA Ausgabe konfigurieren
-  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);     // Aktualisierungsrate auf 1Hz setzen
-}
-
 void initializeMHZ19() {
   mySerial.begin(9600, SERIAL_8N1, 44, 43);
   myMHZ19.begin(mySerial);
-  myMHZ19.autoCalibration();
+  //myMHZ19.autoCalibration();
 }
 
 void initializeDS18B20() {
   sensors.begin();
   if (!sensors.getAddress(tempDeviceAddress, 0)) {
-    Serial.println("Kein DS18B20 Sensor gefunden!");
   } else {
-    Serial.println("DS18B20 Sensor gefunden und initialisiert.");
   }
 }
 
@@ -128,7 +208,7 @@ void initializeMQTT() {
 }
 
 void subscribeToTopics() {
-  const char* topics[] = {
+  std::array<const char*, 15> topics = {
     "/relay/1", "/relay/2", "/relay/3", "/relay/4", "/relay/5", "/relay/6",
     "/ssr", "/ssrPower", "/MinDruck", "/Wasserversorgung", "/Boilerheizung",
     "/UVCLicht", "/Kuehlschrankgross", "/Kuehlschrankklein", "/Inverter"
@@ -143,7 +223,6 @@ void setup() {
   analogSetAttenuation(ADC_11db);
 
   initializeSerial();
-  initializeGPS();
   initializeMHZ19();
   setup_wifi();
   initializeMQTT();
@@ -154,10 +233,18 @@ void setup() {
 
   initializeDS18B20();
 
+  for (int i = 0; command[i]; i++) {
+    checksum ^= command[i];
+  }
+  // Erstellen Sie den vollständigen Befehl mit der Checksumme
+  char fullCommand[30];
+  snprintf(fullCommand, sizeof(fullCommand), "$%s*%02X\r\n", command, checksum);
+  // Senden Sie den Befehl an das GPS-Gerät
+  Serial1.print(fullCommand);
+
   MDNS.begin("esp32");
   server.begin();
   MDNS.addService("http", "tcp", OTA_PORT);
-  Serial.printf("HTTPUpdateServer ready! Open http://%s.local/update in your browser\n", WiFi.getHostname());
 
   subscribeToTopics();
   client.publish("/heartbeat", "setup");
@@ -167,8 +254,8 @@ void setup() {
 void sendTemperature() {
   currentTemperature = getTemperature();
   if (currentTemperature != DEVICE_DISCONNECTED_C) {
-    snprintf(tempMsg, sizeof(tempMsg) - 1, "%f", currentTemperature);
-    client.publish("temperature", tempMsg);
+snprintf(tempMsg.data(), tempMsg.size() , "%f", currentTemperature);
+client.publish("temperature", tempMsg.data());
   }
 }
 
@@ -180,61 +267,70 @@ float getTemperature() {
 void loop() {
   currentMillis = millis();
 
-  // GPS-Daten verarbeiten
   handleGPSData();
+  handlePressure();
+  manageWaterAndHeating();
+  handleOTAUpdates();
+  checkMQTTConnection();
+  handleMQTTLoop();
+  sendTemperatureData();
+  sendCO2Data();
+  sendHeapData();
+}
 
-  // Druck berechnen und senden, wenn geparkt
+void handlePressure() {
   if (isParked) {
     berechneUndSendeDruck();
   }
+}
 
-  // Wasser und Heizung verwalten
-  manageWaterAndHeating();
-
-  // OTA-Updates verarbeiten
+void handleOTAUpdates() {
   ArduinoOTA.handle();
+}
 
-  // MQTT-Verbindungsstatus überprüfen
+void checkMQTTConnection() {
   if (currentMillis - lastCheckTime >= CHECK_INTERVAL) {
     if (!client.connected()) {
       disconnectCount++;
       if (disconnectCount >= 3) {
         reconnect();
-        disconnectCount = 0;  // Zurücksetzen des Zählers nach dem Reconnect-Versuch
+        disconnectCount = 0;
       }
     } else {
-      disconnectCount = 0;  // Zurücksetzen des Zählers, wenn die Verbindung besteht
+      disconnectCount = 0;
     }
-    lastCheckTime = currentMillis;  // Aktualisieren der letzten Überprüfungszeit
+    lastCheckTime = currentMillis;
   }
+}
 
+void handleMQTTLoop() {
   client.loop();
+}
 
-  // Temperaturdaten senden
-  if (currentMillis - lastTempSentTime >= 20000) {  // 20 Sekunden
+void sendTemperatureData() {
+  if (currentMillis - lastTempSentTime >= 20000) {
     currentTemperature = getTemperature();
     sendTemperature();
     lastTempSentTime = currentMillis;
   }
+}
 
-  // Heartbeat senden
-  if (currentMillis - lastHeartbeatTime >= HEARTBEAT_INTERVAL) {
-    client.publish("/heartbeat", "alive");
-    lastHeartbeatTime = currentMillis;
-  }
-
-  // CO2-Daten senden
+void sendCO2Data() {
   if (currentMillis - lastCO2SendTime >= 10000) {
-    co2_ppm = myMHZ19.getCO2();  // Get CO2 concentration in ppm
-    snprintf(co2Msg, sizeof(tempMsg) - 1, "%d", co2_ppm);
+    co2_ppm = myMHZ19.getCO2();
+    char co2Msg[10];  // Assuming CO2 ppm won't exceed 9999
+    snprintf(co2Msg, sizeof(co2Msg), "%d", co2_ppm);
     client.publish("/CO2", co2Msg);
     lastCO2SendTime = currentMillis;
   }
+}
 
-  // Freien Heap-Speicher senden
+void sendHeapData() {
   if (currentMillis - lastHeapSendTime >= HEAP_SEND_INTERVAL) {
-    snprintf(heapMsg, sizeof(heapMsg), "%u", ESP.getFreeHeap());
-    client.publish("/esp32/freeHeap", heapMsg);
+    //char heapMsg[10];  // Assuming heap size won't exceed 9999999999 bytes
+    snprintf(heapMsg.data(), heapMsg.size(), "%u", ESP.getFreeHeap());
+
+    client.publish("/esp32/freeHeap", heapMsg.data());
     lastHeapSendTime = currentMillis;
   }
 }
@@ -244,126 +340,128 @@ void setHeatingPower(int percentage) {
   ledcWrite(0, pwmValue);
 }
 
-void handleGPSData() {
-  lastGPSCheckTime = 0;  // Zeitpunkt der letzten GPS-Datenverarbeitung
-  lastGPSSyncTime = 0;   // Zeitpunkt der letzten GPS-Zeitsynchronisation
-  if (currentMillis - lastGPSCheckTime >= 1000) {
-    while (Serial1.available()) {
-      c = GPS.read();
+void processGPSData() {
+    if (GPS.location.isValid() && GPS.satellites.value() >= MIN_SATELLITES && GPS.hdop.value() <= MAX_HDOP) {
+        currentSpeedkmh = GPS.speed.kmph();
+        unsigned long timeSinceLastSend = currentMillis - lastSendTime;
 
-      if (GPS.newNMEAreceived() && GPS.parse(GPS.lastNMEA())) {
-        currentSpeedKnots = GPS.speed;
-        currentSpeedkmh = currentSpeedKnots * 1.852;
-
-        if (currentSpeedkmh < 2) {  // Geschwindigkeitsgrenze in Knoten
-          if (!isParked) {
-            lastSendTime = currentMillis;
-            isParked = true;
-          } else if (currentMillis - lastSendTime >= 5000) {
+        if (currentSpeedkmh < SPEED_THRESHOLD) {
+            if (!isParked) {
+                lastSendTime = currentMillis;
+                isParked = true;
+            } else if (timeSinceLastSend >= PARKED_SEND_INTERVAL) {
+                sendData();
+                lastSendTime = currentMillis;
+            }
+        } else if (timeSinceLastSend >= MOVING_SEND_INTERVAL || isParked) {
             sendData();
             lastSendTime = currentMillis;
-          }
-        } else if (currentMillis - lastSendTime >= 1000 || isParked) {
-          sendData();
-          lastSendTime = currentMillis;
-          isParked = false;
+            isParked = false;
         }
-      }
     }
+}
 
-    lastGPSCheckTime = currentMillis;  // Aktualisieren des Zeitpunkts der letzten GPS-Datenverarbeitung
-  }
+void handleGPSData() {
+    if (currentMillis - lastGPSCheckTime >= MOVING_SEND_INTERVAL) {
+        int iteration = 0;
+        while (Serial1.available() && iteration < MAX_GPS_ITERATIONS) {
+            GPS.encode(Serial1.read());
+            processGPSData();
+            iteration++;
+        }
+        lastGPSCheckTime = currentMillis;
+    }
+}
+
+void publishRelayState(const char* topic, bool state) {
+    client.publish(topic, state ? "true" : "false");
 }
 
 void manageWaterAndHeating() {
-  lastExecutionTime = 0;  // Zeitpunkt der letzten Ausführung
-  // Überprüfen, ob seit der letzten Ausführung 2 Sekunden vergangen sind
-  if (currentMillis - lastExecutionTime >= 2000) {
+    if (currentMillis - lastExecutionTime >= EXECUTION_INTERVAL) {
+        if (pressureCmFiltered <= MinDruck || !Wasserversorgung) {
+            Boilerheizung = false;
+            Wasserversorgung = false;
+            if (relayStates[5]) {
+                sr.set(5, LOW);
+                publishRelayState("/relay/6", false);
+                relayStates[5] = false;
+            }
+            setHeatingPower(0);
+        } else {
+            sr.set(5, HIGH);
+            publishRelayState("/relay/6", true);
 
-    if (pressureCmFiltered <= MinDruck || !Wasserversorgung) {
-      Boilerheizung = false;
-      Wasserversorgung = false;
-      if (relayStates[5]) {  // Überprüfen Sie, ob das Relais bereits ausgeschaltet ist
-        sr.set(5, LOW);
-        client.publish("/relay/6", "false");
-        relayStates[5] = false;
-      }
-      setHeatingPower(0);
-    } else {
-      sr.set(5, HIGH);
-      client.publish("/relay/6", "true");
-
-      if (Boilerheizung) {
-        client.publish("/Boilerheizung", "true");
-        client.publish("/ssr", "true");
-        if (millis() - heatingStartTime > 10000) {
-          setHeatingPower(ssrPower);
+            if (Boilerheizung) {
+                publishRelayState("/Boilerheizung", true);
+                publishRelayState("/ssr", true);
+                if (currentMillis - heatingStartTime > HEATING_START_INTERVAL) {
+                    setHeatingPower(ssrPower);
+                }
+            }
         }
-      }
-    }
 
-    lastExecutionTime = currentMillis;  // Aktualisieren des Zeitpunkts der letzten Ausführung
-  }
+        lastExecutionTime = currentMillis;
+    }
+}
+
+void formatAndPublishPressure(const char* topic, double value) {
+    char msg[50];
+    snprintf(msg, sizeof(msg), "%f", value);
+    client.publish(topic, msg);
+}
+
+double calculatePressure_kPa(double voltage) {
+    return mapf(voltage, 0.0, ADC_VOLTAGE, MIN_PRESSURE, MAX_PRESSURE);
 }
 
 void berechneUndSendeDruck() {
-  // Zeitpunkt der letzten Ausführung
-  lastExecutionTime1 = 0;
+    if (currentMillis - lastExecutionTime1 >= 2000) {
+        sensorValue = analogRead(SENSOR_PIN);
+        voltage = sensorValue * (ADC_VOLTAGE / ADC_MAX_VALUE);
 
-  // Überprüfen, ob seit der letzten Ausführung 2 Sekunden vergangen sind
-  if (currentMillis - lastExecutionTime1 >= 2000) {
-    sensorValue = analogRead(SENSOR_PIN);
-    voltage = sensorValue * (3.3 / 4095.0);  // Umwandlung des ADC-Wertes in eine Spannung
+        pressure_kPa = calculatePressure_kPa(voltage);
+        pressure_cm = pressure_kPa / GRAVITY_ACCELERATION;
+        pressureCmFiltered = alpha * pressure_cm + (1.0 - alpha) * pressureCmFiltered;
+        pressure_L = pressureCmFiltered * 3.2;
 
-    // Direkte Umrechnung der Spannung in Druck
-    pressure_kPa = mapf(voltage, 0.0, 3.3, MIN_PRESSURE, MAX_PRESSURE);
+        if (isParked && abs(pressureCmFiltered - lastSentPressureCm) > 0.1 && currentMillis - lastPressureSentTime > 5000) {
+            formatAndPublishPressure("pressure", pressure_L);
+            lastSentPressureCm = pressureCmFiltered;
+            lastPressureSentTime = currentMillis;
+        }
 
-    // Umrechnung von kPa in cm Wassersäule
-    pressure_cm = pressure_kPa / 9.81;
-    pressureCmFiltered = alpha * pressure_cm + (1.0 - alpha) * pressureCmFiltered;
+        const char* alarmStatus = (lastSentPressureCm < MinDruck) ? "alarm" : "kein alarm";
+        client.publish("/wasserdruckalarm", alarmStatus);
 
-    // Umrechnung von cm in Liter
-    pressure_L = pressureCmFiltered * 3.2;
-
-    if (isParked && abs(pressureCmFiltered - lastSentPressureCm) > 0.1 && currentMillis - lastPressureSentTime > 5000) {
-      pressureMsg[50];
-      snprintf(pressureMsg, sizeof(pressureMsg) - 1, "%f", pressure_L);
-      client.publish("pressure", pressureMsg);
-      lastSentPressureCm = pressureCmFiltered;
-      lastPressureSentTime = currentMillis;
+        lastExecutionTime1 = currentMillis;
     }
+}
 
-    if (lastSentPressureCm < MinDruck) {
-      waterPressureAlarm = true;
-      client.publish("/wasserdruckalarm", "alarm");
-    } else {
-      waterPressureAlarm = false;
-      client.publish("/wasserdruckalarm", "kein alarm");
-    }
-
-    lastExecutionTime1 = currentMillis;  // Aktualisieren des Zeitpunkts der letzten Ausführung
-  }
+void formatAndPublish(const char* topic, double value) {
+    char msg[50];
+    snprintf(msg, sizeof(msg), "%f", value);
+    client.publish(topic, msg);
 }
 
 void sendData() {
-  kalmanGain = 0.4;
-  filteredLatitude = previousLatitude + kalmanGain * (GPS.latitudeDegrees - previousLatitude);
-  filteredLongitude = previousLongitude + kalmanGain * (GPS.longitudeDegrees - previousLongitude);
-  isOutlier = abs(filteredLatitude - GPS.latitudeDegrees) > outlierThreshold || abs(filteredLongitude - GPS.longitudeDegrees) > outlierThreshold;
-  previousLatitude = filteredLatitude;
-  previousLongitude = filteredLongitude;
+    double latitudeError = GPS.location.lat() - previousLatitude;
+    double longitudeError = GPS.location.lng() - previousLongitude;
 
-  if (!isOutlier) {
-    snprintf(latMsg, sizeof(latMsg) - 1, "%f", filteredLatitude);
-    snprintf(lonMsg, sizeof(lonMsg) - 1, "%f", filteredLongitude);
-    snprintf(speedMsg, sizeof(speedMsg) - 1, "%f", currentSpeedkmh);
-    snprintf(altMsg, sizeof(altMsg) - 1, "%f", GPS.altitude);
+    filteredLatitude = previousLatitude + KALMAN_GAIN * latitudeError;
+    filteredLongitude = previousLongitude + KALMAN_GAIN * longitudeError;
 
-    client.publish("latitude", latMsg);
-    client.publish("longitude", lonMsg);
-    client.publish("speed", speedMsg);
-    client.publish("altitude", altMsg);
-  }
+    bool isLatitudeOutlier = abs(latitudeError) > outlierThreshold;
+    bool isLongitudeOutlier = abs(longitudeError) > outlierThreshold;
+
+    previousLatitude = filteredLatitude;
+    previousLongitude = filteredLongitude;
+
+    if (!isLatitudeOutlier && !isLongitudeOutlier) {
+        formatAndPublish("latitude", filteredLatitude);
+        formatAndPublish("longitude", filteredLongitude);
+        formatAndPublish("speed", currentSpeedkmh);
+    }
 }
 
 void setup_wifi() {
@@ -373,9 +471,21 @@ void setup_wifi() {
   while (WiFi.status() != WL_CONNECTED && millis() - startTime < 10000) {
   }
 
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Failed to connect to WiFi.");
+  if (WiFi.status() == WL_CONNECTED) {
+    
+    // IP-Adresse des ESP32 abrufen
+    IPAddress ip = WiFi.localIP();
+    char ipStr[16];  // Platz für die IP-Adresse im Format "xxx.xxx.xxx.xxx"
+    snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+
+    // IP-Adresse über MQTT senden
+    client.publish("/esp32/ip_address", ipStr);
+  } else {
   }
+}
+
+void calibrateCO2Sensor() {
+    myMHZ19.calibrate();
 }
 
 void handleRelays(int index, bool state) {
@@ -383,72 +493,34 @@ void handleRelays(int index, bool state) {
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
-  payload[length] = '\0';
+    char* payloadStr = reinterpret_cast<char*>(payload);
+    payloadStr[length] = '\0';  // Null-terminate the payload
 
-  if (strncmp(topic, "/relay/", 7) == 0) {
-    int relayIndex = topic[7] - '1';
-    if (relayIndex >= 0 && relayIndex < 6) {
-      relayStates[relayIndex] = (strcmp((char*)payload, "true") == 0);
-      handleRelays(relayIndex, relayStates[relayIndex]);
-      return;
+    std::string topicStr(topic);
+
+    if (topicStr.substr(0, 7) == "/relay/") {
+        int relayIndex = topic[7] - '1';
+        if (relayIndex >= 0 && relayIndex < 6) {
+            relayStates[relayIndex] = (strcmp(payloadStr, "true") == 0);
+            handleRelays(relayIndex, relayStates[relayIndex]);
+            return;
+        }
+    } else {
+        auto handlerIt = handlers.find(topicStr);
+        if (handlerIt != handlers.end()) {
+            handlerIt->second(payloadStr);
+            return;
+        }
     }
-  }
 
-  if (strcmp(topic, "/ssrPower") == 0) {
-    ssrPower = atoi((char*)payload);
-    Serial.println(ssrPower);
-    return;
-  }
-
-  struct TopicAction {
-    const char* topicName;
-    int relayIndex;
-    const char* logMessage;
-  };
-
-  TopicAction actions[] = {
-    { "/Inverter", 1, "Setting Inverter relay" },
-    { "/Kuehlschrankgross", 2, "Setting Kuehlschrankgross relay" },
-    { "/Kuehlschrankklein", 3, nullptr },
-    { "/UVCLicht", 4, nullptr },
-    { "/Wasserversorgung", 5, nullptr },
-    { "/Boilerheizung", -1, nullptr }
-  };
-
-  for (TopicAction action : actions) {
-    if (strcmp(topic, action.topicName) == 0) {
-      if (action.relayIndex != -1) {
-        bool state = (strcmp((char*)payload, "true") == 0);
-        sr.set(action.relayIndex, state ? HIGH : LOW);
-        char relayTopic[15];
-        snprintf(relayTopic, sizeof(relayTopic), "/relay/%d", action.relayIndex + 1);
-        client.publish(relayTopic, state ? "true" : "false");
-        relayStates[action.relayIndex] = state;
-      }
-
-      if (action.logMessage) {
-        Serial.println(action.logMessage);
-      }
-
-      if (strcmp(topic, "/Boilerheizung") == 0) {
-        bool state = (strcmp((char*)payload, "true") == 0);
-        Boilerheizung = state;
-        Wasserversorgung = state;
-        client.publish("/Wasserversorgung", state ? "true" : "false");
-        client.publish("/ssr", state ? "true" : "false");
-        setHeatingPower(state ? ssrPower : 0);
-      }
-
-      return;
+    if (!client.connected()) {
+        char disconnectMessage[100];
+        snprintf(disconnectMessage, sizeof(disconnectMessage), "Reconnected to MQTT broker. Last disconnect reason: %s", lastDisconnectReason);
+        client.publish("/esp32/reconnect", disconnectMessage);
     }
-  }
-
-  if (!client.connected()) {
-    char disconnectMessage[100];
-    snprintf(disconnectMessage, sizeof(disconnectMessage), "Reconnected to MQTT broker. Last disconnect reason: %s", lastDisconnectReason);
-    client.publish("/esp32/reconnect", disconnectMessage);
-  }
 }
+
+
 
 boolean reconnect() {
   static unsigned long lastAttemptTime = 0;
@@ -458,10 +530,8 @@ boolean reconnect() {
     lastAttemptTime = millis();
 
     if (client.connect("ESP32Client")) {
-      Serial.println("connected");
       return true;
     } else {
-      Serial.println("Reconnect failed, trying again in 5 seconds.");
       return false;
     }
   }
